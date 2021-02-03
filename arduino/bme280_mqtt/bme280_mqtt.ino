@@ -31,10 +31,15 @@
 #define tries 2
 
 #include <WiFi.h>
-#include <PubSubClient.h>
-#include <WiFiClient.h>
-//char* mqtt_server = "skule.sormo.no";
-char* mqtt_server = "192.168.10.16";
+#include <MQTT.h>
+
+const char ssid[] = "dlink";
+const char pass[] = "12345abc";
+
+WiFiClient net;
+MQTTClient client;
+
+unsigned long lastMillis = 0;
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
@@ -48,8 +53,34 @@ char charBuf[50];
 char charBuf1[50];
 int teller = 0;
 
-WiFiClient espClient;
-PubSubClient client(espClient);
+//WiFiClient espClient;
+//PubSubClient client(espClient);
+
+
+void connect() {
+  Serial.print("checking wifi...");
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(1000);
+  }
+
+  Serial.print("\nconnecting...");
+  while (!client.connect("arduino", "public", "public")) {
+    Serial.print(".");
+    delay(1000);
+  }
+
+
+}
+
+void messageReceived(String &topic, String &payload) {
+  Serial.println("incoming: " + topic + " - " + payload);
+
+  // Note: Do not use the client in the callback to publish, subscribe or
+  // unsubscribe as it may cause deadlocks when other things arrive while
+  // sending and receiving acknowledgments. Instead, change a global variable,
+  // or push to a queue and handle it in the loop after calling `client.loop()`.
+}
 
 void setup() {
   Serial.begin(115200);
@@ -63,54 +94,14 @@ void setup() {
   Serial.println("Fil: " + String(__FILE__));
   Serial.print("Kompilert: "); Serial.println(__TIMESTAMP__);
 
-String  ssid1 = "2.4G";
-String   password1 = "12345abc";
-  Serial.print("SSID: "); Serial.print(ssid1); Serial.print(" PSWD: "); Serial.println(password1);
-  Serial.print("Prøver " + ssid1 + "..");
-  WiFi.mode(WIFI_STA);
-    WiFi.begin(charBuf, charBuf1);
-  ssid1.toCharArray(charBuf, 20);
-  password1.toCharArray(charBuf1, 20);
-  
-  Serial.println("charBuf:\t" + String(charBuf) + "\tSSID:\t" + String(charBuf1));
- WiFi.begin("2.4G", "12345abc");
+  WiFi.begin(ssid, pass);
 
-  while ((WiFi.waitForConnectResult() != WL_CONNECTED) && (teller++ < tries))
-  {
-    Serial.print(".");
-    delay(10);
-  };
+  // Note: Local domain names (e.g. "Computer.local" on OSX) are not supported
+  // by Arduino. You need to set the IP address directly.
+  client.begin("192.168.10.16", net);
+  client.onMessage(messageReceived);
 
-
-  client.setServer(mqtt_server, 1883); // 1883 er default lister port.
-  //  client.setCallback(callback);
-  Serial.print("Prover MQTT server:");
-  teller = 0;
-  boolean connected1 = false;
-
-  while (!client.connected() && (teller++ < 4) && (!connected1)) {
-    Serial.print(".");
-    // Create a random client ID
-    String clientId = "1234";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    Serial.println("clientid: " + clientId);
-    if (client.connect(clientId.c_str()))
-    {
-      connected1 = true;
-      Serial.println(" connected");
-      // Once connected, publish an announcement...
-      client.publish("metrologi/mqtt1", mqtt_server);
-      String(__FILE__).toCharArray(charBuf, 50);
-      client.publish("metrologi/file", charBuf);
-      ssid1.toCharArray(charBuf, 20);
-      client.publish("meteorologi/wifi1", charBuf);
-      client.publish("meteorologi", "status1");
-      client.publish("meteorologi", "status2");
-    }
- 
-  }
-
+  connect();
 
 
   if (! bme.begin(0x76, &Wire)) {
@@ -205,6 +196,15 @@ String   password1 = "12345abc";
 
 void loop() {
 //  }void l(){
+
+  client.loop();
+  delay(10);  // <- fixes some issues with WiFi stability
+
+  if (!client.connected()) {
+    connect();
+  }
+
+
   // Only needed in forced mode! In normal mode, you can remove the next line.
   bme.takeForcedMeasurement(); // has no effect in normal mode
 
