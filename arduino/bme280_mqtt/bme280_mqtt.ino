@@ -14,9 +14,6 @@
   Written by Limor Fried & Kevin Townsend for Adafruit Industries.
   BSD license, all text above must be included in any redistribution
   See the LICENSE file for details.
-
-
-  testet mot WEMOS LOLIN32
  ***************************************************************************/
 
 #include <Wire.h>
@@ -28,188 +25,166 @@
 #define BME_MISO 12
 #define BME_MOSI 11
 #define BME_CS 10
-#define tries 2
-
-#include <WiFi.h>
-#include <MQTT.h>
-
-const char ssid[] = "dlink";
-const char pass[] = "12345abc";
-
-WiFiClient net;
-MQTTClient client;
-
-unsigned long lastMillis = 0;
 
 #define SEALEVELPRESSURE_HPA (1013.25)
+
+
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+
+// Update these with values suitable for your network.
+
+const char* ssid = "2.4G";
+const char* password = "12345abc";
+const char* mqtt_server = "192.168.10.16";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+unsigned long lastMsg = 0;
+#define MSG_BUFFER_SIZE  (50)
+char msg[MSG_BUFFER_SIZE];
+int value = 0;
+char charBuf[50];
+char charBuf1[50];
+int teller = 0;
+String filnavn;
 
 Adafruit_BME280 bme; // I2C
 //Adafruit_BME280 bme(BME_CS); // hardware SPI
 //Adafruit_BME280 bme(BME_CS, BME_MOSI, BME_MISO, BME_SCK); // software SPI
 
 unsigned long delayTime;
-String filnavn, ssid1, password1 ;
-char charBuf[50];
-char charBuf1[50];
-int teller = 0;
+void setup_wifi() {
 
-//WiFiClient espClient;
-//PubSubClient client(espClient);
+  delay(10);
+  // We start by connecting to a WiFi network
+  Serial.println();
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
 
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
 
-void connect() {
-  Serial.print("checking wifi...");
   while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
     Serial.print(".");
-    delay(1000);
   }
 
-  Serial.print("\nconnecting...");
-  while (!client.connect("arduino", "public", "public")) {
-    Serial.print(".");
-    delay(1000);
-  }
+  randomSeed(micros());
 
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
+
+  // Switch on the LED if an 1 was received as first character
+  if ((char)payload[0] == '1') {
+    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
+    // but actually the LED is on; this is because
+    // it is active low on the ESP-01)
+  } else {
+    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
+  }
 
 }
 
-void messageReceived(String &topic, String &payload) {
-  Serial.println("incoming: " + topic + " - " + payload);
-
-  // Note: Do not use the client in the callback to publish, subscribe or
-  // unsubscribe as it may cause deadlocks when other things arrive while
-  // sending and receiving acknowledgments. Instead, change a global variable,
-  // or push to a queue and handle it in the loop after calling `client.loop()`.
+void reconnect() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "ESP8266Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish("outTopic", "hello world");
+      // ... and resubscribe
+      client.subscribe("inTopic");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
 }
+
 
 void setup() {
   Serial.begin(115200);
-  Serial.begin(115200);
 
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+
+
+  // Wire.begin(5, 4);
   delay(10);
   Serial.flush();
   Serial.println("\n********************************");
- String filnavn = String(__FILE__);
+   filnavn = String(__FILE__);
 
   Serial.println("Fil: " + String(__FILE__));
   Serial.print("Kompilert: "); Serial.println(__TIMESTAMP__);
 
-  WiFi.begin(ssid, pass);
+  while (!Serial);   // time to get serial running
+  Serial.println(F("BME280 test"));
 
-  // Note: Local domain names (e.g. "Computer.local" on OSX) are not supported
-  // by Arduino. You need to set the IP address directly.
-  client.begin("192.168.10.16", net);
-  client.onMessage(messageReceived);
+  Wire.begin(5, 4);
+  unsigned status;
 
-  connect();
-
-
-  if (! bme.begin(0x76, &Wire)) {
-    Serial.println("Could not find a valid BME280 sensor, check wiring!");
-    while (1);
+  // default settings
+  status = bme.begin(0x76, &Wire);
+  // You can also pass in a Wire library object like &Wire2
+  // status = bme.begin(0x76, &Wire2)
+  if (!status) {
+    Serial.println("Could not find a valid BME280 sensor, check wiring, address, sensor ID!");
+    Serial.print("SensorID was: 0x"); Serial.println(bme.sensorID(), 16);
+    Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
+    Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
+    Serial.print("        ID of 0x60 represents a BME 280.\n");
+    Serial.print("        ID of 0x61 represents a BME 680.\n");
+    while (1) delay(10);
   }
 
   Serial.println("-- Default Test --");
-  Serial.println("normal mode, 16x oversampling for all, filter off,");
-  Serial.println("0.5ms standby period");
-  delayTime = 5000;
+  delayTime = 1000;
 
-
-  // For more details on the following scenarious, see chapter
-  // 3.5 "Recommended modes of operation" in the datasheet
-
-  /*
-      // weather monitoring
-      Serial.println("-- Weather Station Scenario --");
-      Serial.println("forced mode, 1x temperature / 1x humidity / 1x pressure oversampling,");
-      Serial.println("filter off");
-      bme.setSampling(Adafruit_BME280::MODE_FORCED,
-                      Adafruit_BME280::SAMPLING_X1, // temperature
-                      Adafruit_BME280::SAMPLING_X1, // pressure
-                      Adafruit_BME280::SAMPLING_X1, // humidity
-                      Adafruit_BME280::FILTER_OFF   );
-
-      // suggested rate is 1/60Hz (1m)
-      delayTime = 60000; // in milliseconds
-  */
-
-  /*
-      // humidity sensing
-      Serial.println("-- Humidity Sensing Scenario --");
-      Serial.println("forced mode, 1x temperature / 1x humidity / 0x pressure oversampling");
-      Serial.println("= pressure off, filter off");
-      bme.setSampling(Adafruit_BME280::MODE_FORCED,
-                      Adafruit_BME280::SAMPLING_X1,   // temperature
-                      Adafruit_BME280::SAMPLING_NONE, // pressure
-                      Adafruit_BME280::SAMPLING_X1,   // humidity
-                      Adafruit_BME280::FILTER_OFF );
-
-      // suggested rate is 1Hz (1s)
-      delayTime = 1000;  // in milliseconds
-  */
-
-  /*
-      // indoor navigation
-      Serial.println("-- Indoor Navigation Scenario --");
-      Serial.println("normal mode, 16x pressure / 2x temperature / 1x humidity oversampling,");
-      Serial.println("0.5ms standby period, filter 16x");
-      bme.setSampling(Adafruit_BME280::MODE_NORMAL,
-                      Adafruit_BME280::SAMPLING_X2,  // temperature
-                      Adafruit_BME280::SAMPLING_X16, // pressure
-                      Adafruit_BME280::SAMPLING_X1,  // humidity
-                      Adafruit_BME280::FILTER_X16,
-                      Adafruit_BME280::STANDBY_MS_0_5 );
-
-      // suggested rate is 25Hz
-      // 1 + (2 * T_ovs) + (2 * P_ovs + 0.5) + (2 * H_ovs + 0.5)
-      // T_ovs = 2
-      // P_ovs = 16
-      // H_ovs = 1
-      // = 40ms (25Hz)
-      // with standby time that should really be 24.16913... Hz
-      delayTime = 41;
-  */
-
-  /*
-    // gaming
-    Serial.println("-- Gaming Scenario --");
-    Serial.println("normal mode, 4x pressure / 1x temperature / 0x humidity oversampling,");
-    Serial.println("= humidity off, 0.5ms standby period, filter 16x");
-    bme.setSampling(Adafruit_BME280::MODE_NORMAL,
-                  Adafruit_BME280::SAMPLING_X1,   // temperature
-                  Adafruit_BME280::SAMPLING_X4,   // pressure
-                  Adafruit_BME280::SAMPLING_NONE, // humidity
-                  Adafruit_BME280::FILTER_X16,
-                  Adafruit_BME280::STANDBY_MS_0_5 );
-
-    // Suggested rate is 83Hz
-    // 1 + (2 * T_ovs) + (2 * P_ovs + 0.5)
-    // T_ovs = 1
-    // P_ovs = 4
-    // = 11.5ms + 0.5ms standby
-    delayTime = 12;
-  */
+  WiFi.begin("2.4G", "12345abc");
+  // connect();
 
   Serial.println();
 }
 
 
 void loop() {
-//  }void l(){
 
-  client.loop();
-  delay(10);  // <- fixes some issues with WiFi stability
 
   if (!client.connected()) {
-    connect();
+    reconnect();
   }
-
-
-  // Only needed in forced mode! In normal mode, you can remove the next line.
-  bme.takeForcedMeasurement(); // has no effect in normal mode
-
+  client.loop();
   printValues();
   delay(delayTime);
+
+
+  filnavn.toCharArray(charBuf, 50);
+  client.publish("meteorologi/fil", charBuf);
+  client.publish("meteorolgo/versjon", "1.0.0");
+
 }
 
 
@@ -217,16 +192,11 @@ void printValues() {
   Serial.print("Temperature = ");
   Serial.print(bme.readTemperature());
   Serial.println(" *C");
-  String(bme.readTemperature()).toCharArray(charBuf, 50);
-  client.publish("meteorologi/Temp", charBuf);
 
   Serial.print("Pressure = ");
 
   Serial.print(bme.readPressure() / 100.0F);
   Serial.println(" hPa");
-  String(bme.readPressure()/100).toCharArray(charBuf, 50);
-   Serial.print("charbuf  "); Serial.println(charBuf);
- client.publish("meteorologi/Pres", charBuf);
 
   Serial.print("Approx. Altitude = ");
   Serial.print(bme.readAltitude(SEALEVELPRESSURE_HPA));
@@ -235,8 +205,12 @@ void printValues() {
   Serial.print("Humidity = ");
   Serial.print(bme.readHumidity());
   Serial.println(" %");
+
+  String(bme.readTemperature()).toCharArray(charBuf, 50);
+  client.publish("meteorologi/Temp", charBuf);
+  String(bme.readPressure() / 100).toCharArray(charBuf, 50);
+  client.publish("meteorologi/Pres", charBuf);
   String(bme.readHumidity()).toCharArray(charBuf, 50);
   client.publish("meteorologi/Hum", charBuf);
-
   Serial.println();
 }
