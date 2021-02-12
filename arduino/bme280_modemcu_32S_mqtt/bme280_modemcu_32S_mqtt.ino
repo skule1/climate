@@ -1,12 +1,16 @@
 /***************************************************************************
   This is a library for the BME280 humidity, temperature & pressure sensor
+
   Designed specifically to work with the Adafruit BME280 Breakout
   ----> http://www.adafruit.com/products/2650
+
   These sensors use I2C or SPI to communicate, 2 or 4 pins are required
   to interface. The device's I2C address is either 0x76 or 0x77.
+
   Adafruit invests time and resources providing this open source code,
   please support Adafruit andopen-source hardware by purchasing products
   from Adafruit!
+
   Written by Limor Fried & Kevin Townsend for Adafruit Industries.
   BSD license, all text above must be included in any redistribution
   See the LICENSE file for details.
@@ -16,10 +20,12 @@
 #include <SPI.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
+//#include <ESP8266WiFi.h>
+#include <WiFi.h>
+//#include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+#define SEALEVELPRESSURE_HPA (1013.25)
 
 
 #define BME_SCK 13
@@ -27,20 +33,22 @@
 #define BME_MOSI 11
 #define BME_CS 10
 
-#define SEALEVELPRESSURE_HPA (1013.25)
+#define SEALEVELPRESSURE_HPA 1013.25
 
 
-#include <ESP8266WiFi.h>
-#include <PubSubClient.h>
+#include <WiFi.h>
+#include <MQTT.h>
 
-// Update these with values suitable for your network.
+const char ssid[] = "2.4G";
+const char pass[] = "12345abc";
 
-const char* ssid = "2.4G";
-const char* password = "12345abc";
+WiFiClient net;
+MQTTClient client;
+
 const char* mqtt_server = "192.168.10.16";
 
-WiFiClient espClient;
-PubSubClient client(espClient);
+//WiFiClient espClient;
+//MQTTClient client(espClient);
 unsigned long lastMsg = 0;
 #define MSG_BUFFER_SIZE  (50)
 char msg[MSG_BUFFER_SIZE];
@@ -56,90 +64,69 @@ Adafruit_BME280 bme; // I2C
 
 unsigned long delayTime;
 
+float hum, temp, trykk, hoyde,spenning;
 
 
-void setup_wifi() {
-
-  delay(10);
-  // We start by connecting to a WiFi network
-  Serial.println();
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-
+void connect() {
+  Serial.print("checking wifi...");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
     Serial.print(".");
+    delay(1000);
   }
 
-  randomSeed(micros());
+  Serial.print("\nconnecting...");
+  while (!client.connect("192.168.10.16", "public", "public")) {
+    Serial.print(".");
+    delay(1000);
+  }
 
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  Serial.println("\nconnected!");
+
+  client.subscribe("/hello");
+  // client.unsubscribe("/hello");
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
+void messageReceived(String &topic, String &payload) {
+  Serial.println("incoming: " + topic + " - " + payload);
 
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    // but actually the LED is on; this is because
-    // it is active low on the ESP-01)
-  } else {
-    digitalWrite(BUILTIN_LED, HIGH);  // Turn the LED off by making the voltage HIGH
-  }
-
+  // Note: Do not use the client in the callback to publish, subscribe or
+  // unsubscribe as it may cause deadlocks when other things arrive while
+  // sending and receiving acknowledgments. Instead, change a global variable,
+  // or push to a queue and handle it in the loop after calling `client.loop()`.
 }
 
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Create a random client ID
-    String clientId = "ESP8266Client-";
-    clientId += String(random(0xffff), HEX);
-    // Attempt to connect
-    if (client.connect(clientId.c_str())) {
-      Serial.println("connected");
-      // Once connected, publish an announcement...
-      client.publish("outTopic", "hello world");
-      // ... and resubscribe
-      client.subscribe("inTopic");
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 void setup() {
   Serial.begin(115200);
 
-  setup_wifi();
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
+  WiFi.begin(ssid, pass);
+
+  // Note: Local domain names (e.g. "Computer.local" on OSX) are not supported
+  // by Arduino. You need to set the IP address directly.
+  client.begin("192.168.10.16", net);
+  client.onMessage(messageReceived);
+
+  connect();
 
 
   // Wire.begin(5, 4);
   delay(10);
   Serial.flush();
   Serial.println("\n********************************");
-   filnavn = String(__FILE__);
+  filnavn = String(__FILE__);
 
   Serial.println("Fil: " + String(__FILE__));
   Serial.print("Kompilert: "); Serial.println(__TIMESTAMP__);
@@ -147,7 +134,8 @@ void setup() {
   while (!Serial);   // time to get serial running
   Serial.println(F("BME280 test"));
 
-  Wire.begin(5, 4);
+  //  Wire.begin(5, 4);
+  Wire.begin();
   unsigned status;
 
   // default settings
@@ -173,7 +161,7 @@ void setup() {
   Serial.println();
 
 
-   ArduinoOTA.onStart([]() {
+  ArduinoOTA.onStart([]() {
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH) {
       type = "sketch";
@@ -214,56 +202,61 @@ void setup() {
 void loop() {
 
   ArduinoOTA.handle();
-  if (!client.connected()) {
-    reconnect();
-  }
   client.loop();
-  printValues();
-  delay(delayTime);
+  delay(10);  // <- fixes some issues with WiFi stability
+
+  if (!client.connected()) {
+    connect();
+  }
 
 
   filnavn.toCharArray(charBuf, 50);
-  client.publish("meteorologi/fil", charBuf);
-  client.publish("meteorolgo/versjon", "1.0.0");
-
+  client.publish("meteorologi1/fil", charBuf);
+  client.publish("meteorologi1/versjon", "1.0.0");
+  printValues();
+  delay(1000);
 }
 
 
 void printValues() {
+
+  temp = bme.readTemperature();
+  trykk = bme.readPressure() / 100.0;
+  hoyde = bme.readAltitude(SEALEVELPRESSURE_HPA);
+  hum = bme.readHumidity();
+  spenning=(5*analogRead(A0)*2/5120)*4.57/4.0;
+
   Serial.print("Temperature = ");
-  Serial.print(bme.readTemperature());
+  Serial.print(temp);
   Serial.println(" *C");
 
   Serial.print("Pressure = ");
 
-  Serial.print(bme.readPressure() / 100.0F);
+  Serial.print(trykk);
   Serial.println(" hPa");
 
   Serial.print("Approx. Altitude = ");
-  Serial.print(bme.readAltitude(SEALEVELPRESSURE_HPA));
+  Serial.print(hoyde);
   Serial.println(" m");
 
   Serial.print("Humidity = ");
-  Serial.print(bme.readHumidity());
+  Serial.print(hum);
   Serial.println(" %");
 
-  String(bme.readTemperature()).toCharArray(charBuf, 50);
-  client.publish("meteorologi/Temp", charBuf);
-  String(bme.readPressure() / 100).toCharArray(charBuf, 50);
-  client.publish("meteorologi/Pres", charBuf);
-  String(bme.readHumidity()).toCharArray(charBuf, 50);
-  client.publish("meteorologi/Hum", charBuf);
+  
+  Serial.print("Spenning = ");
+  Serial.print(spenning);
+  Serial.println(" V");
+
+  String(temp).toCharArray(charBuf, 50);
+  client.publish("meteorologi1/Temp", charBuf);
+  String(trykk).toCharArray(charBuf, 50);
+  client.publish("meteorologi1/Pres", charBuf);
+  String(hum).toCharArray(charBuf, 50);
+  client.publish("meteorologi1/Hum", charBuf);
+  String(hoyde).toCharArray(charBuf, 50);
+  client.publish("meteorologi1/hoyde", charBuf);
+   String(spenning).toCharArray(charBuf, 50);
+  client.publish("meteorologi1/spenning", charBuf);
   Serial.println();
 }
-© 2021 GitHub, Inc.
-Terms
-Privacy
-Security
-Status
-Docs
-Contact GitHub
-Pricing
-API
-Training
-Blog
-About
